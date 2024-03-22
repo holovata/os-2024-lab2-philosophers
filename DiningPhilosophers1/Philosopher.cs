@@ -6,210 +6,162 @@ using System.Threading.Tasks;
 
 namespace philosophers_try2
 {
-	public class Philosopher
+    public enum PhilosopherStatus { Thinking, Eating };
+    public class Philosopher
 	{
         public int Name { get; }
         private Fork LeftFork { get; }
         private Fork RightFork { get; }
         private readonly Philosophers _allPhilosophers;
-        /// <summary>Regulates the duration of eating</summary>
-        private readonly Random _rnd;
+        private readonly Random _random;
 
         public Philosopher(int name, Fork leftFork, Fork rightFork, Philosophers allPhilosophers)
 		{
 			Name = name;
 			LeftFork = leftFork;
 			RightFork = rightFork;
-            _rnd = new Random(Name); // used to assign eating time
+            _random = new Random(Name); // used to assign eating time
             _allPhilosophers = allPhilosophers;
 		}
 
-        void AquireForks()
-        {
-            lock (Sync)
-            {
-                LeftFork.IsBeingUsed = true;
-                LeftFork.BeingUsedBy = this;
-                RightFork.IsBeingUsed = true;
-                RightFork.BeingUsedBy = this;
+        private static readonly object locker = new object(); // об'єкт-локер для синхронізації доступу до ресурсів
+        private PhilosopherStatus Status { get; set; } = PhilosopherStatus.Thinking;
 
+        void GrabForks()
+        {
+            lock (locker) // блокування для забезпечення взаємовиключності
+            {
+                LeftFork.PickUp(this);
+                RightFork.PickUp(this);
                 Status = PhilosopherStatus.Eating;
-                Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} Philosopher Ph{Name} acquired forks: (F{LeftFork.Name}, F{RightFork.Name}).");
+                Console.WriteLine($">>> Філософ {Name} взяв виделки {LeftFork.Name} та {RightFork.Name}");
             }
         }
 
-        void ReleaseForks()
+        void PutDownForks()
         {
-            lock (Sync)
+            lock (locker) // блокування для забезпечення взаємовиключності
             {
-                LeftFork.IsBeingUsed = false;
-                LeftFork.BeingUsedBy = null;
-                RightFork.IsBeingUsed = false;
-                RightFork.BeingUsedBy = null;
-
+                LeftFork.PutDown();
+                RightFork.PutDown();
                 Status = PhilosopherStatus.Thinking;
-                Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} Philosopher Ph{Name} released forks: (F{LeftFork.Name}, F{RightFork.Name}).");
+                Console.WriteLine($"<<< Філософ {Name} поклав виделки {LeftFork.Name} та {RightFork.Name}");
             }
         }
 
+        private readonly int _maxThinkDuration = ConfigValue.Inst.MaxThinkDuration;
+        private readonly int _minThinkDuration = ConfigValue.Inst.MinThinkDuration;
 
-
-
-        /// <summary>ConfigValue.Inst.MaxPhilsophersToEatSimultaneously, 2, philosophers may eat at the same time</summary>
         static readonly SemaphoreSlim AquireEatPermissionSlip = new SemaphoreSlim(ConfigValue.Inst.MaxPhilsophersToEatSimultaneously);
 
-		/// <summary>Synchronization object for acquiring forks and change status.</summary>
-		private static readonly object Sync = new object();
-
-		
-
-		private PhilosopherStatus Status { get; set; } = PhilosopherStatus.Thinking;
-
-		/// <summary>
-		/// Statistical information
-		/// How many times thinking permission was granted but one of the needed forks was not available
-		/// </summary>
+		// How many times thinking permission was granted but one of the needed forks was not available
 		public int EatingConflictCount { get; private set; }
 
-		/// <summary>
-		/// Statistical information
-		/// How many times this philosopher was given a go ahead to eat
-		/// </summary>
+		// How many times this philosopher was given a go ahead to eat
 		public int EatCount { get; private set; }
 
-		/// <summary>
-		/// Statistical information
-		/// Total duration of eating in milliseconds
-		/// </summary>
+		// Total duration of eating in milliseconds
 		public int TotalEatingTime { get; private set; }
 
+        private IEnumerable<Philosopher> PhilosphersEatingNow()
+        {
+            lock (locker)
+                return _allPhilosophers.Where(p => p.Status == PhilosopherStatus.Eating);
+        }
 
+        private bool AreBothForksAvailable()
+        {
+            lock (locker)
+            {
+                if (LeftFork.IsBeingUsed)
+                {
+                    Console.WriteLine($"--- Філософ {Name} не може їсти, " +
+                    $"тому що ліва виделка ({LeftFork.Name}) використовується Філософом {LeftFork.BeingUsedBy.Name}");
+                    return false;
+                }
 
+                if (RightFork.IsBeingUsed)
+                {
+                    Console.WriteLine($"--- Філософ {Name} не може їсти, " +
+                    $"тому що права виделка ({RightFork.Name}) використовується Філософом {RightFork.BeingUsedBy.Name}");
+                    return false;
+                }
+            }
+            // обидві виделки доступні => філософ може розпочати їсти
+            return true;
+        }
 
-		/// <summary>Retrieve some values once</summary>
-		private readonly int _maxThinkDuration = ConfigValue.Inst.MaxThinkDuration;
-		private readonly int _minThinkDuration = ConfigValue.Inst.MinThinkDuration;
+        private void Eat()
+        {
+            var eatingDuration = _random.Next(_maxThinkDuration) + _minThinkDuration;// тривалість прийому їжі випадково генерується
 
-		/// <summary>
-		/// The routine each Task employs for the eating philosophers
-		/// </summary>
-		/// <param name="stopDining"></param>
-		public void EatingHabit(CancellationToken stopDining)
-		{
-			// After eat permission was granted.  The philosopher will wait for a
-			// duration of durationBeforeRequstEatPermission before waiting for an
-			// eat permission again.
-			var durationBeforeRequstEatPermission = ConfigValue.Inst.DurationBeforeAskingPermissionToEat;
+            var eatingPhilosophers = PhilosphersEatingNow().Select(p => p.Name).ToList();
+            Console.WriteLine($"||| Філософ {Name} їсть.                           " +
+                              $"Їдять {eatingPhilosophers.Count} філософів: " +
+                              $"{string.Join(", ", eatingPhilosophers.Select(p => $"{p}"))}");
 
-			for (var i = 0;; ++i)
-			{
-				// If calling routine is asking for dining to stop then comply and stop.
-				if (stopDining.IsCancellationRequested)
-				{
-					Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff}             Ph{Name} IS ASKED TO STOP THE DINING EXPERIENCE");
-					stopDining.ThrowIfCancellationRequested();
-				}
+            Thread.Sleep(eatingDuration);
 
-				try
-				{
-					// Wait for eating permission.
-					// Note: Once eating permission is granted, the philosopher still needs to 
-					// check if the left and right forks are available
-					AquireEatPermissionSlip.WaitAsync().Wait();
-					Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} Philosopher Ph{Name} will attempt to eat.  Attempt: {i}.");
+            Console.WriteLine($"??? Філософ {Name} думає " +
+                              $" {eatingDuration} мілісекунд");
 
-					bool isOkToEat;
-					lock (Sync)
-					{
-						// Check for Fork availability
-						isOkToEat = IsForksAvailable();
-						if (isOkToEat)
-							AquireForks();						// May throw an exception
-					}
+            EatCount++;
+            TotalEatingTime += eatingDuration;
+        }
 
-					if (isOkToEat)
-					{
-						PhilosopherEat();
-						ReleaseForks(); // May throw an exception
-					}
-					else
-						++EatingConflictCount;
-				}
-				catch (Exception ex)
-				{
-					Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} ERORR...    Ph{Name} ENCOUNTER AN ERROR: {ex.Message} " +
-					                  $"AND NOW IS NOT PARTICIPATING IN THE DINING EXPERIENCE {new string('.', 20)}");
-					throw;
-				}
-				finally
-				{
-					AquireEatPermissionSlip.Release();
-				}
+        public void DiningProcess(CancellationToken stopDining)
+        {
+            // після отримання дозволу на їжу філософ буде чекати протягом durationBeforeRequstEatPermission перед наступним запитом на дозвіл на їжу
+            var durationBeforeRequstEatPermission = ConfigValue.Inst.DurationBeforeAskingPermissionToEat;
 
-				// Wait for a duration of durationBeforeRequstEatPermission
-				// before waiting for eat permission.
-				Task.Delay(durationBeforeRequstEatPermission).Wait();
-			}
-		}
+            int i = 0;
+            while (true)
+            {
+                // якщо викликаюча процедура просить зупинити обід
+                if (stopDining.IsCancellationRequested)
+                {
+                    Console.WriteLine($"            Філософ {Name} ПРОСИТЬ ЗУПИНИТИ ОБІД");
+                    stopDining.ThrowIfCancellationRequested();
+                }
 
-		private bool IsForksAvailable()
-		{
-			// Note that this Sync is superfluous because to be effective
-			// the entire method should be called under a lock (sync).
-			// Otherwise, after the lock when the method checks for fork
-			// availability and before the return, one or both forks may
-			// be snatched by another philosopher.
-			lock (Sync)
-			{
-				if (LeftFork.IsBeingUsed)
-				{
-					Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} Philosopher Ph{Name} cannot eat " +
-					                  $"because her/his Left Fork, F{LeftFork.Name}, is in use (by philosopher Ph{LeftFork.BeingUsedBy.Name})");
-					return false;
-				}
+                try
+                {
+                    // очікування дозволу на їжу; після отримання дозволу на їжу філософ повинен перевірити доступність лівої та правої виделок
+                    AquireEatPermissionSlip.WaitAsync().Wait();
+                    Console.WriteLine($"/// Філософ {Name} пробує їсти (Спроба №: {i})");
 
-				if (RightFork.IsBeingUsed)
-				{
-					Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} Philosopher Ph{Name} cannot eat " +
-					                  $"because her/his right Fork, F{RightFork.Name}, is in use (by philosopher Ph{RightFork.BeingUsedBy.Name})");
-					return false;
-				}
-			}
+                    bool isOkToEat;
+                    lock (locker)
+                    {
+                        isOkToEat = AreBothForksAvailable();
+                        if (isOkToEat)
+                            GrabForks();
+                    }
 
-			// Both forks are available, philosopher may commence eating
-			return true;
-		}
+                    if (isOkToEat)
+                    {
+                        Eat();
+                        PutDownForks();
+                    }
+                    else
+                        ++EatingConflictCount;
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"!!!ПОМИЛКА!!!    Філософ {Name} створив помилку {ex.Message} " +
+                                      $" {new string('.', 20)}");
+                    throw;
+                }
+                finally
+                {
+                    AquireEatPermissionSlip.Release();
+                }
 
-		private void PhilosopherEat()
-		{
-			// Eating duration is randomized
-			var eatingDuration = _rnd.Next(_maxThinkDuration) + _minThinkDuration;
+                // очікування протягом durationBeforeRequstEatPermission перед наступним запитом на дозвіл на їжу
+                Task.Delay(durationBeforeRequstEatPermission).Wait();
+                i++;
+            }
+        }
 
-			// Display who is eating
-			var eatingPhilosophers = EatingPhilosphers().Select(p => p.Name).ToList();
-			Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} Philosopher Ph{Name} is eating.  " +
-			                  $"There are: {eatingPhilosophers.Count} " +
-			                  $"({string.Join(", ", eatingPhilosophers.Select(p => $"Ph{p}"))}) eating philosophers.");
-
-			//
-			// Simulate our philosopher eating yummy spaghetti
-			//
-			Thread.Sleep(eatingDuration);
-
-			Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} Philosopher Ph{Name} is thinking after eating yummy spaghetti for {eatingDuration} milliseconds.");
-
-			// Statistics update
-			++EatCount;
-			TotalEatingTime += eatingDuration;
-		}
-
-		private IEnumerable<Philosopher> EatingPhilosphers()
-		{
-			lock (Sync)
-				return _allPhilosophers.Where(p => p.Status == PhilosopherStatus.Eating);
-		}
-
-
-
-	}
+    }
 }

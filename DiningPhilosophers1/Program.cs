@@ -1,71 +1,74 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 
 namespace philosophers_try2
 {
-	class Program
-	{
-		static void Main(string[] args)
-		{
-			var philosophers = new Philosophers().InitializePhilosophers();
-			var phEatTasks = new List<Task>();
+    class Program
+    {
+        static void Main(string[] args)
+        {
+            Console.OutputEncoding = UTF8Encoding.UTF8;
 
-			using (var stopDiningTokenSource = new CancellationTokenSource())
-			{
-				var stopDiningToken = stopDiningTokenSource.Token;
-				foreach (var ph in philosophers)
-					phEatTasks.Add(
-						Task.Factory.StartNew(() => ph.EatingHabit(stopDiningToken), stopDiningToken)
-							.ContinueWith(_ => {
-								Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} ERROR...    Ph{ph.Name} FALTED AND LOST DINING PRIVILEGES ...");
-							}, TaskContinuationOptions.OnlyOnFaulted)
-							.ContinueWith(_ => {
-								Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff}             Ph{ph.Name} HAS LEFT THE TABLE ...");
-							}, TaskContinuationOptions.OnlyOnCanceled)
-					);
+            var philosophers = new Philosophers().InitializePhilosophers();
+            var eatingTasks = new List<Task>();
 
-				// Allow philosophers to dine for DurationAllowPhilosophersToEat
-				// milliseconds.  Original problem have philosophers dine 
-				// forever, but we are not patient enough to wait until 
-				// forever...
-				Task.Delay(ConfigValue.Inst.DurationPhilosophersEat).Wait();
+            // використання токена скасування для управління процесом обіду
+            using (var stopDiningTokenSource = new CancellationTokenSource())
+            {
+                var stopDiningToken = stopDiningTokenSource.Token;
 
-				try
-				{
-					// After a duration of DurationAllowPhilosophersToEat we
-					// ask the philosophers to stop dining.
-					stopDiningTokenSource.Cancel();
-					Task.WaitAll(phEatTasks.ToArray());
-				}
-				catch (AggregateException ae)
-				{
-					foreach (var ex in ae.Flatten().InnerExceptions)
-						Console.WriteLine($"{DateTime.Now:HH:mm:ss.ffff} {ex.GetType().Name}:  {ex.Message}");
-				}
-			}
+                // створення задач для кожного філософа
+                foreach (var philosopher in philosophers)
+                    eatingTasks.Add(
+                        // запуск DiningProcess кожного філософа у власному потоці з використанням токена скасування
+                        Task.Factory.StartNew(() => philosopher.DiningProcess(stopDiningToken), stopDiningToken)
+                            // Обробка помилок у випадку виняткових ситуацій
+                            .ContinueWith(_ => {
+                                Console.WriteLine($"!!!Помилка!!!    Філософ {philosopher.Name} втратив привілеї обіду");
+                            }, TaskContinuationOptions.OnlyOnFaulted)
+                            // Обробка відміни задачі
+                            .ContinueWith(_ => {
+                                Console.WriteLine($"             Філософ {philosopher.Name} покинув столик");
+                            }, TaskContinuationOptions.OnlyOnCanceled)
+                    );
 
-			// Done--so say so
-			Console.WriteLine("Done.");
+                // дозвіл пообідати протягом певного часу
+                Task.Delay(ConfigValue.Inst.DurationPhilosophersEat).Wait();
 
-			// Write some statistics down
-			Console.WriteLine();
-			var totalEatCount = philosophers.Sum(p => p.EatCount);
-			var totalEatingTime = philosophers.Sum(p => p.TotalEatingTime);
-			var totalEatingConflicts = philosophers.Sum(p => p.EatingConflictCount);
-			foreach (var ph in philosophers)
-				Console.WriteLine($"Philosopher Ph{ph.Name} ate {ph.EatCount,3} times.  " +
-					$"For a total of {ph.TotalEatingTime:#,##0} milliseconds.  " +
-					$"Eating conflicts: {ph.EatingConflictCount}.");
-			Console.WriteLine($"Collectively philosophers ate {totalEatCount} times.  For a total of {totalEatingTime:#,##0} milliseconds.  Eating conflicts: {totalEatingConflicts}");
+                try
+                {
+                    // по закінченню часу, відміна усіх задач і очікування їх завершення
+                    stopDiningTokenSource.Cancel();
+                    Task.WaitAll(eatingTasks.ToArray());
+                }
+                catch (AggregateException ae)
+                {
+                    foreach (var ex in ae.Flatten().InnerExceptions)
+                        Console.WriteLine($"{ex.GetType().Name}:  {ex.Message}");
+                }
+            }
 
-			Console.WriteLine();
-			Console.WriteLine("Press any key to exit");
-			Console.ReadKey();
-		}
-	}
+            Console.WriteLine("Готово.");
+
+            // статистика
+            Console.WriteLine();
+            var totalEatCount = philosophers.Sum(p => p.EatCount);
+            var totalEatingTime = philosophers.Sum(p => p.TotalEatingTime);
+            var totalEatingConflicts = philosophers.Sum(p => p.EatingConflictCount);
+            foreach (var philosopher in philosophers)
+                Console.WriteLine($"Філософ {philosopher.Name} пообідав {philosopher.EatCount,3} разів; " +
+                    $"Загальний час обіду: {philosopher.TotalEatingTime:#,##0} мілісекунд; " +
+                    $"Кількість конфліктів: {philosopher.EatingConflictCount}.");
+            Console.WriteLine($"Разом філософи пообідали {totalEatCount} разів; " +
+                $"Загальний час обіду: {totalEatingTime:#,##0} мілісекунд; Кількість конфліктів: {totalEatingConflicts}");
+
+            Console.WriteLine();
+            Console.WriteLine("Натисніть будь-яку клавішу для виходу");
+            Console.ReadKey();
+        }
+    }
 }
-
-

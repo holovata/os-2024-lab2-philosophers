@@ -50,7 +50,6 @@
     <Compile Include="Fork.cs" />
     <Compile Include="Philosopher.cs" />
     <Compile Include="Philosophers.cs" />
-    <Compile Include="PhilosopherStatus.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
   <ItemGroup>
