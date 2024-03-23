@@ -12,10 +12,11 @@ namespace philosophers_try2
         public int Name { get; }
         private Fork LeftFork { get; }
         private Fork RightFork { get; }
-        private readonly Philosophers _allPhilosophers;
+        private readonly Initialization _allPhilosophers;
         private readonly Random _random;
+        private PhilosopherStatus Status { get; set; } = PhilosopherStatus.Thinking;
 
-        public Philosopher(int name, Fork leftFork, Fork rightFork, Philosophers allPhilosophers)
+        public Philosopher(int name, Fork leftFork, Fork rightFork, Initialization allPhilosophers)
 		{
 			Name = name;
 			LeftFork = leftFork;
@@ -25,8 +26,8 @@ namespace philosophers_try2
 		}
 
         private static readonly object locker = new object(); // об'єкт-локер для синхронізації доступу до ресурсів
-        private PhilosopherStatus Status { get; set; } = PhilosopherStatus.Thinking;
-
+        /*Використання блокування гарантує, що лише один потік може виконувати
+         * операції взяття і покладання виделок одночасно*/
         void GrabForks()
         {
             lock (locker) // блокування для забезпечення взаємовиключності
@@ -37,10 +38,9 @@ namespace philosophers_try2
                 Console.WriteLine($">>> Філософ {Name} взяв виделки {LeftFork.Name} та {RightFork.Name}");
             }
         }
-
         void PutDownForks()
         {
-            lock (locker) // блокування для забезпечення взаємовиключності
+            lock (locker)
             {
                 LeftFork.PutDown();
                 RightFork.PutDown();
@@ -49,21 +49,10 @@ namespace philosophers_try2
             }
         }
 
-        private readonly int _maxThinkDuration = ConfigValue.Inst.MaxThinkDuration;
-        private readonly int _minThinkDuration = ConfigValue.Inst.MinThinkDuration;
-
-        static readonly SemaphoreSlim AquireEatPermissionSlip = new SemaphoreSlim(ConfigValue.Inst.MaxPhilsophersToEatSimultaneously);
-
-		// How many times thinking permission was granted but one of the needed forks was not available
-		public int EatingConflictCount { get; private set; }
-
-		// How many times this philosopher was given a go ahead to eat
-		public int EatCount { get; private set; }
-
-		// Total duration of eating in milliseconds
+		public int EatingTimesCount { get; private set; }
 		public int TotalEatingTime { get; private set; }
 
-        private IEnumerable<Philosopher> PhilosphersEatingNow()
+        private IEnumerable<Philosopher> PhilosophersEatingNow()
         {
             lock (locker)
                 return _allPhilosophers.Where(p => p.Status == PhilosopherStatus.Eating);
@@ -91,28 +80,37 @@ namespace philosophers_try2
             return true;
         }
 
+        private readonly int _maxThinkDuration = ConfigValue.Inst.MaxThinkDuration;//визначає верхню межу випадково згенерованої тривалості часу в мілісекундах, яку філософ буде проводити в роздумах.
+        private readonly int _minThinkDuration = ConfigValue.Inst.MinThinkDuration;//визначає нижню межу цієї випадкової тривалості часу.
+        //визначають максимальну та мінімальну тривалість часу, яку філософ проводить у стані роздумів перед тим, як розпочати їсти.
+
         private void Eat()
         {
+            //генерація випадкової тривалості часу роздумів. якщо _minThinkDuration = 1000 (1 секунда), а _maxThinkDuration = 3000 (3 секунди),
+            //то філософ буде розмірковувати випадкову кількість часу від 1 до 3 секунд перед тим, як почати їсти
             var eatingDuration = _random.Next(_maxThinkDuration) + _minThinkDuration;// тривалість прийому їжі випадково генерується
 
-            var eatingPhilosophers = PhilosphersEatingNow().Select(p => p.Name).ToList();
-            Console.WriteLine($"||| Філософ {Name} їсть.                           " +
+            var eatingPhilosophers = PhilosophersEatingNow().Select(p => p.Name).ToList();
+            Console.WriteLine($"||| Філософ {Name} їсть                           " +
                               $"Їдять {eatingPhilosophers.Count} філософів: " +
                               $"{string.Join(", ", eatingPhilosophers.Select(p => $"{p}"))}");
 
-            Thread.Sleep(eatingDuration);
+            Thread.Sleep(eatingDuration); //імітація процесу обіду
 
-            Console.WriteLine($"??? Філософ {Name} думає " +
-                              $" {eatingDuration} мілісекунд");
+            Console.WriteLine($"??? Філософ {Name} їв" +
+                              $" {eatingDuration} мілісекунд і тепер думає");
 
-            EatCount++;
+            EatingTimesCount++;
             TotalEatingTime += eatingDuration;
         }
+
+        //обмеження к-ті філософів, які їдять одночасно
+        static readonly SemaphoreSlim GetEatingPermissionSlip = new SemaphoreSlim(ConfigValue.Inst.MaxPhilsophersEatingSimultaneously);
 
         public void DiningProcess(CancellationToken stopDining)
         {
             // після отримання дозволу на їжу філософ буде чекати протягом durationBeforeRequstEatPermission перед наступним запитом на дозвіл на їжу
-            var durationBeforeRequstEatPermission = ConfigValue.Inst.DurationBeforeAskingPermissionToEat;
+            var timeBeforeRequestingEatPermission = ConfigValue.Inst.DurationBeforeAskingPermissionToEat;
 
             int i = 0;
             while (true)
@@ -120,31 +118,36 @@ namespace philosophers_try2
                 // якщо викликаюча процедура просить зупинити обід
                 if (stopDining.IsCancellationRequested)
                 {
-                    Console.WriteLine($"            Філософ {Name} ПРОСИТЬ ЗУПИНИТИ ОБІД");
-                    stopDining.ThrowIfCancellationRequested();
+                    try
+                    {
+                        stopDining.ThrowIfCancellationRequested();
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        // Обработка исключения, если операция была отменена
+                        Console.WriteLine($"          Філософ {Name} припиняє обід.");
+                        break; 
+                    }
                 }
 
                 try
                 {
                     // очікування дозволу на їжу; після отримання дозволу на їжу філософ повинен перевірити доступність лівої та правої виделок
-                    AquireEatPermissionSlip.WaitAsync().Wait();
-                    Console.WriteLine($"/// Філософ {Name} пробує їсти (Спроба №: {i})");
+                    GetEatingPermissionSlip.WaitAsync().Wait();
+                    Console.WriteLine($"/// Філософ {Name} пробує почати їсти");
 
-                    bool isOkToEat;
+                    bool isReadyToEat;
                     lock (locker)
                     {
-                        isOkToEat = AreBothForksAvailable();
-                        if (isOkToEat)
+                        isReadyToEat = AreBothForksAvailable();
+                        if (isReadyToEat)
                             GrabForks();
                     }
-
-                    if (isOkToEat)
+                    if (isReadyToEat)
                     {
                         Eat();
                         PutDownForks();
                     }
-                    else
-                        ++EatingConflictCount;
                 }
                 catch (Exception ex)
                 {
@@ -154,11 +157,12 @@ namespace philosophers_try2
                 }
                 finally
                 {
-                    AquireEatPermissionSlip.Release();
+                    //закінчив їсти
+                    GetEatingPermissionSlip.Release();
                 }
 
-                // очікування протягом durationBeforeRequstEatPermission перед наступним запитом на дозвіл на їжу
-                Task.Delay(durationBeforeRequstEatPermission).Wait();
+                // очікування протягом timeBeforeRequestingEatPermission перед наступним запитом на дозвіл на їжу
+                Task.Delay(timeBeforeRequestingEatPermission).Wait();
                 i++;
             }
         }

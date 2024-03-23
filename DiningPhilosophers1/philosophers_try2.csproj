@@ -49,7 +49,7 @@
     <Compile Include="ConfigValue.cs" />
     <Compile Include="Fork.cs" />
     <Compile Include="Philosopher.cs" />
-    <Compile Include="Philosophers.cs" />
+    <Compile Include="Initialization.cs" />
     <Compile Include="Program.cs" />
   </ItemGroup>
   <ItemGroup>

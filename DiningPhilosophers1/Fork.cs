@@ -55,9 +55,7 @@ namespace philosophers_try2
                 _beingUsedBy = philosopher;
             }
             else
-            {
                 throw new InvalidOperationException($"Виделка {Name} вже використовується.");
-            }
         }
 
         public void PutDown()

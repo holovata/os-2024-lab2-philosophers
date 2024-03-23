@@ -13,20 +13,20 @@ namespace philosophers_try2
         {
             Console.OutputEncoding = UTF8Encoding.UTF8;
 
-            var philosophers = new Philosophers().InitializePhilosophers();
+            var philosophers = new Initialization().CreatePhilosophersAndForks();
             var eatingTasks = new List<Task>();
 
             // використання токена скасування для управління процесом обіду
-            using (var stopDiningTokenSource = new CancellationTokenSource())
+            using (var stopDiningTokenSource = new CancellationTokenSource()) //створення токена
             {
                 var stopDiningToken = stopDiningTokenSource.Token;
 
-                // створення задач для кожного філософа
+                // створення задачі для кожного філософа
                 foreach (var philosopher in philosophers)
                     eatingTasks.Add(
                         // запуск DiningProcess кожного філософа у власному потоці з використанням токена скасування
                         Task.Factory.StartNew(() => philosopher.DiningProcess(stopDiningToken), stopDiningToken)
-                            // Обробка помилок у випадку виняткових ситуацій
+                            // Обробка помилок
                             .ContinueWith(_ => {
                                 Console.WriteLine($"!!!Помилка!!!    Філософ {philosopher.Name} втратив привілеї обіду");
                             }, TaskContinuationOptions.OnlyOnFaulted)
@@ -37,7 +37,7 @@ namespace philosophers_try2
                     );
 
                 // дозвіл пообідати протягом певного часу
-                Task.Delay(ConfigValue.Inst.DurationPhilosophersEat).Wait();
+                Task.Delay(ConfigValue.Inst.DinnerDuration).Wait();
 
                 try
                 {
@@ -51,20 +51,21 @@ namespace philosophers_try2
                         Console.WriteLine($"{ex.GetType().Name}:  {ex.Message}");
                 }
             }
-
-            Console.WriteLine("Готово.");
+            Console.WriteLine();
+            Console.WriteLine("Кінець обіду. СТАТИСТИКА:");
 
             // статистика
-            Console.WriteLine();
-            var totalEatCount = philosophers.Sum(p => p.EatCount);
+            
+            var totalEatCount = philosophers.Sum(p => p.EatingTimesCount);
             var totalEatingTime = philosophers.Sum(p => p.TotalEatingTime);
-            var totalEatingConflicts = philosophers.Sum(p => p.EatingConflictCount);
             foreach (var philosopher in philosophers)
-                Console.WriteLine($"Філософ {philosopher.Name} пообідав {philosopher.EatCount,3} разів; " +
-                    $"Загальний час обіду: {philosopher.TotalEatingTime:#,##0} мілісекунд; " +
-                    $"Кількість конфліктів: {philosopher.EatingConflictCount}.");
+                Console.WriteLine($"Філософ {philosopher.Name} пообідав {philosopher.EatingTimesCount,3} разів; " +
+                    $"Сумарний час обіду філософа: {philosopher.TotalEatingTime:#,##0} мілісекунд; "
+                    //+ $"Кількість конфліктів: {philosopher.EatingConflictCount}.");
+                    );
             Console.WriteLine($"Разом філософи пообідали {totalEatCount} разів; " +
-                $"Загальний час обіду: {totalEatingTime:#,##0} мілісекунд; Кількість конфліктів: {totalEatingConflicts}");
+                $"Загальний час обіду: {totalEatingTime:#,##0} мілісекунд; " /*+
+                $"Кількість конфліктів: {totalEatingConflicts}"*/);
 
             Console.WriteLine();
             Console.WriteLine("Натисніть будь-яку клавішу для виходу");
